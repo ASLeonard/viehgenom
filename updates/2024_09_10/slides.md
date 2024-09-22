@@ -117,6 +117,10 @@ How much bias is reduced with a pangenome using:
 
 . . .
 
+Also the *complexity* of the analyses @Derek
+
+. . .
+
 Is any bias introduced by using too complex of a graph (e.g., non-cattle assemblies)?
 
 ---
