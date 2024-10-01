@@ -25,8 +25,8 @@ rule wfmash_index:
         block_length = lambda wildcards: wildcards.segment_length * 3
     threads: 2
     resources:
-        mem_mb = 5000,
-        walltime = '1h'
+        mem_mb_per_cpu = 5000,
+        runtime = '1h'
     shell:
         '''
         wfmash \
@@ -56,8 +56,8 @@ rule wfmash:
         mapping = lambda wildcards, input: f'-i {input.mapping}' if wildcards.mode == 'alignment' else ''
     threads: lambda wildcards: 12 if wildcards.mode == 'mapping' else 16
     resources:
-        mem_mb = 5000,
-        walltime = '4h'
+        mem_mb_per_cpu = 5000,
+        runtime = '4h'
     shell:
         '''
         wfmash \
@@ -87,8 +87,8 @@ rule split_approx_mappings_in_chunks:
         paf = expand('pggb/p{p}_s{segment_length}/mapping.{chunk}.paf',chunk=range(config.get('wfmash_chunks',1)),allow_missing=True)
     threads: 1
     resources:
-        mem_mb = 5000,
-        walltime = '2h'
+        mem_mb_per_cpu = 5000,
+        runtime = '2h'
     run:
         rank_to_mapping_dict, mapping_list = {}, []
 
@@ -141,8 +141,8 @@ rule seqwish:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.seqwish.gfa'
     threads: 12
     resources:
-        mem_mb = 5000,
-        walltime = '4h'
+        mem_mb_per_cpu = 5000,
+        runtime = '4h'
     shell:
         '''
             seqwish \
@@ -182,8 +182,8 @@ rule smoothxg:
         POA_params = POA_params
     threads: 8
     resources:
-        mem_mb = 10000,
-        walltime = '24h'
+        mem_mb_per_cpu = 10000,
+        runtime = '24h'
     shell:
         '''
             smoothxg \
@@ -213,8 +213,8 @@ rule gffafix:
         affixes = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.gffafix.affixes.tsv.gz'
     threads: 1
     resources:
-        mem_mb = 15000,
-        walltime = '4h'
+        mem_mb_per_cpu = 15000,
+        runtime = '4h'
     shell:
         '''
         gfaffix {input.gfa} -o {output.gfa} |\
@@ -232,8 +232,8 @@ rule vg_path_normalise:
         reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip()
     threads: 4
     resources:
-        mem_mb = 10000,
-        walltime = '4h'
+        mem_mb_per_cpu = 10000,
+        runtime = '4h'
     shell:
         '''
         vg convert -g {input.gfa} -t {threads} -x |\
@@ -249,8 +249,8 @@ rule odgi_unchop:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.gfa'
     threads: 6
     resources:
-        mem_mb = 8000,
-        walltime = '4h'
+        mem_mb_per_cpu = 8000,
+        runtime = '4h'
     shell:
         '''
         odgi build -t {threads} -P -g {input.gfa} -o - -O |\
