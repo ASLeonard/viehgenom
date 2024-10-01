@@ -16,9 +16,37 @@ wildcard_constraints:
     mode = r'mapping|alignment',
     chunk = r'\.\d+|'
 
+rule wfmash_index:
+    input:
+        fasta = multiext('test.fa.gz','.fai','.gzi')
+    output:
+        index = 'pggb/p{p}_s{segment_length}/index.mm3'
+    params:
+        block_length = lambda wildcards: wildcards.segment_length * 3
+    threads: 2
+    resources:
+        mem_mb = 5000,
+        walltime = '1h'
+    shell:
+        '''
+        wfmash \
+          -s {wildcards.segment_length} \
+          -l {params.block_length} \
+          -c 30000 \
+          -p {wildcards.p} \
+          -n 1 \
+          -k 19 \
+          -t {threads} \
+          --tmp-base $TMPDIR \
+          --mm-index {output.index} \
+          {input.fasta} \
+          --create-index-only
+        '''
+
 rule wfmash:
     input:
-        fasta = 'test.fa',
+        fasta = multiext('test.fa.gz','.fai','.gzi'),
+        index = rules.wfmash_index.output['index'],
         mapping = lambda wildcards: 'pggb/p{p}_s{segment_length}/mapping{chunk}.paf' if wildcards.mode == 'alignment' else []
     output:
         paf = 'pggb/p{p}_s{segment_length}/{mode}{chunk,(\.\d+|)}.paf'
@@ -26,11 +54,16 @@ rule wfmash:
         hg_ani_diff = get_hg_filter_ani,
         block_length = lambda wildcards: wildcards.segment_length * 3,
         mapping = lambda wildcards, input: f'-i {input.mapping}' if wildcards.mode == 'alignment' else ''
+    threads: lambda wildcards: 12 if wildcards.mode == 'mapping' else 16
+    resources:
+        mem_mb = 5000,
+        walltime = '4h'
     shell:
         '''
         wfmash \
           -s {wildcards.segment_length} \
           -l {params.block_length} \
+          -c 30000 \
           -p {wildcards.p} \
           -n 1 \
           -k 19 \
@@ -40,6 +73,7 @@ rule wfmash:
           --tmp-base $TMPDIR \
           --hg-filter-ani-diff {params.hg_ani_diff} \
           {input.fasta} \
+          --mm-index {input.index}
           --lower-triangular \
           --approx-map \
           {params.mapping} > {output.paf}
@@ -51,6 +85,10 @@ rule split_approx_mappings_in_chunks:
         mapping = expand(rules.wfmash.output['paf'],mode='mapping',chunk='',allow_missing=True)
     output:
         paf = expand('pggb/p{p}_s{segment_length}/mapping.{chunk}.paf',chunk=range(config.get('wfmash_chunks',1)),allow_missing=True)
+    threads: 1
+    resources:
+        mem_mb = 5000,
+        walltime = '2h'
     run:
         rank_to_mapping_dict, mapping_list = {}, []
 
@@ -97,10 +135,14 @@ rule wfmash_concat:
 
 rule seqwish:
     input:
-        fasta = 'test.fa',
+        fasta = multiext('test.fa.gz','.fai','.gzi'),
         alignment = expand(rules.wfmash_concat.output['paf'],allow_missing=True) if config.get('wfmash_chunks',1) > 1 else expand(rules.wfmash.output['paf'],mode='alignment',chunk='',allow_missing=True)
     output:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.seqwish.gfa'
+    threads: 12
+    resources:
+        mem_mb = 5000,
+        walltime = '4h'
     shell:
         '''
             seqwish \
@@ -138,6 +180,10 @@ rule smoothxg:
         POA_pad_depth = lambda wildcards, input: 100 * sum(1 for _ in open(input.fasta[1])),
         POA_lengths = '700,900,1100',
         POA_params = POA_params
+    threads: 8
+    resources:
+        mem_mb = 10000,
+        walltime = '24h'
     shell:
         '''
             smoothxg \
@@ -165,6 +211,10 @@ rule gffafix:
     output:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.gffafix.gfa',
         affixes = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.gffafix.affixes.tsv.gz'
+    threads: 1
+    resources:
+        mem_mb = 15000,
+        walltime = '4h'
     shell:
         '''
         gfaffix {input.gfa} -o {output.gfa} |\
@@ -180,6 +230,10 @@ rule vg_path_normalise:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.vg.gfa'
     params:
         reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip()
+    threads: 4
+    resources:
+        mem_mb = 10000,
+        walltime = '4h'
     shell:
         '''
         vg convert -g {input.gfa} -t {threads} -x |\
@@ -192,7 +246,11 @@ rule odgi_unchop:
         gfa = rules.vg_path_normalise.output['gfa']
     output:
         og = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.og',
-        gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.gfa',
+        gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.gfa'
+    threads: 6
+    resources:
+        mem_mb = 8000,
+        walltime = '4h'
     shell:
         '''
         odgi build -t {threads} -P -g {input.gfa} -o - -O |\
