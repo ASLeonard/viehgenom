@@ -1,6 +1,6 @@
 rule all:
     input:
-        'pggb/p80_s5000/k19.POAasm5.unchop.og'
+        'pggb/p90_s15000/mapping.paf'
 
 def get_hg_filter_ani(wildcards):
     if float(wildcards.p) >= 90:
@@ -16,16 +16,17 @@ wildcard_constraints:
     mode = r'mapping|alignment',
     chunk = r'\.\d+|'
 
+# add -P params
 rule wfmash_index:
     input:
-        fasta = multiext('test.fa.gz','.fai','.gzi')
+        fasta = multiext('test.fa.gz','','.fai','.gzi')
     output:
         index = 'pggb/p{p}_s{segment_length}/index.mm3'
     params:
-        block_length = lambda wildcards: wildcards.segment_length * 3
-    threads: 2
+        block_length = lambda wildcards: int(wildcards.segment_length) * 3
+    threads: 4
     resources:
-        mem_mb_per_cpu = 5000,
+        mem_mb_per_cpu = 8000,
         runtime = '1h'
     shell:
         '''
@@ -39,20 +40,20 @@ rule wfmash_index:
           -t {threads} \
           --tmp-base $TMPDIR \
           --mm-index {output.index} \
-          {input.fasta} \
+          {input.fasta[0]} \
           --create-index-only
         '''
 
 rule wfmash:
     input:
-        fasta = multiext('test.fa.gz','.fai','.gzi'),
+        fasta = multiext('test.fa.gz','','.fai','.gzi'),
         index = rules.wfmash_index.output['index'],
         mapping = lambda wildcards: 'pggb/p{p}_s{segment_length}/mapping{chunk}.paf' if wildcards.mode == 'alignment' else []
     output:
         paf = 'pggb/p{p}_s{segment_length}/{mode}{chunk,(\.\d+|)}.paf'
     params:
         hg_ani_diff = get_hg_filter_ani,
-        block_length = lambda wildcards: wildcards.segment_length * 3,
+        block_length = lambda wildcards: int(wildcards.segment_length) * 3,
         mapping = lambda wildcards, input: f'-i {input.mapping}' if wildcards.mode == 'alignment' else ''
     threads: lambda wildcards: 12 if wildcards.mode == 'mapping' else 16
     resources:
@@ -70,13 +71,15 @@ rule wfmash:
           -H 0.001 \
           -Y "#" \
           -t {threads} \
-          --tmp-base $TMPDIR \
           --hg-filter-ani-diff {params.hg_ani_diff} \
-          {input.fasta} \
-          --mm-index {input.index}
+          --mm-index {input.index} \
+          --tmp-base $TMPDIR \
+          {params.mapping} \
+          {input.fasta[0]} \
+          --skip-self \
           --lower-triangular \
           --approx-map \
-          {params.mapping} > {output.paf}
+          > {output.paf}
          '''
 
 #based off https://github.com/waveygang/wfmash/blob/main/scripts/split_approx_mappings_in_chunks.py
@@ -87,15 +90,29 @@ rule split_approx_mappings_in_chunks:
         paf = expand('pggb/p{p}_s{segment_length}/mapping.{chunk}.paf',chunk=range(config.get('wfmash_chunks',1)),allow_missing=True)
     threads: 1
     resources:
-        mem_mb_per_cpu = 5000,
-        runtime = '2h'
+        mem_mb_per_cpu = 1000,
+        runtime = '15m'
     run:
-        rank_to_mapping_dict, mapping_list = {}, []
+        import numpy as np
+        rng = np.random.default_rng()
+        weights = np.ones(shape=num_chunks)
 
-        with open(input['mapping']) as f:
-            for rank, line in enumerate(f):
-                # We could avoid keeping everything in memory by reading the file again later
-                rank_to_mapping_dict[rank] = line
+        fds = []
+        for fname in output['paf']:
+            fds.append(open(fname, 'w'))
+
+        def calculate_p(weights):
+            p = 1-weights/weights.sum()
+            return p/p.sum()
+
+        indexes = None
+        with open(input['mapping']) as fin:
+            for rank, line in enumerate(fin):
+
+                if rank % batch_size == 0:
+                    indexes = rng.choice(num_chunks,batch_size,p=calculate_p(weights))
+
+                fds[indexes[rank % batch_size]].write(line)
 
                 _, _, query_start, query_end, _, _, _, target_start, target_end, _, _, _, estimated_identity = line.strip().split('\t')[:13]
 
@@ -103,24 +120,10 @@ rule split_approx_mappings_in_chunks:
                 estimated_identity = float(estimated_identity.split('id:f:')[1]) / 100.0
 
                 # High divergence makes alignment more difficult
-                weight = num_mapped_bases * (1 - estimated_identity)
+                weights[indexes[rank % batch_size]] += num_mapped_bases * (1 - estimated_identity)
 
-                mapping_list.append((rank, weight))
-
-        chunk_list = [[] for i in range(num_of_chunks)]
-        sums = [0] * num_of_chunks
-        i = 0
-        for e in mapping_list:
-            chunk_list[i].append(e)
-            sums[i] += e[1]
-            i = sums.index(min(sums))
-
-        # Collect the ranks from the tuples to generate balanced chunks
-        for num_chunk, element_list in enumerate(chunk_list):
-            with open( f'.chunk_{num_chunk}.paf', 'w') as fw:
-                for rank, _ in element_list:
-                    fw.write(rank_to_mapping_dict[rank])
-
+        for f in fds:
+            f.close()
 
 rule wfmash_concat:
     input:
@@ -135,7 +138,7 @@ rule wfmash_concat:
 
 rule seqwish:
     input:
-        fasta = multiext('test.fa.gz','.fai','.gzi'),
+        fasta = multiext('test.fa.gz','','.fai','.gzi'),
         alignment = expand(rules.wfmash_concat.output['paf'],allow_missing=True) if config.get('wfmash_chunks',1) > 1 else expand(rules.wfmash.output['paf'],mode='alignment',chunk='',allow_missing=True)
     output:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.seqwish.gfa'
@@ -170,7 +173,7 @@ def POA_params(wildcards):
 
 rule smoothxg:
     input:
-        fasta = multiext('test.fa.gz','.fai','.gzi'),
+        fasta = multiext('test.fa.gz','','.fai','.gzi'),
         gfa = rules.seqwish.output['gfa']
     output:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.smoothxg.gfa'
@@ -224,12 +227,12 @@ rule gffafix:
 #Is this helpful?
 rule vg_path_normalise:
     input:
-        fasta = multiext('test.fa.gz','.fai','.gzi'),
+        fasta = multiext('test.fa.gz','','.fai','.gzi'),
         gfa = rules.gffafix.output['gfa']
     output:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.vg.gfa'
     params:
-        reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip()
+        reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip().split('\\t')[0]
     threads: 4
     resources:
         mem_mb_per_cpu = 10000,
