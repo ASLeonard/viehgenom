@@ -54,7 +54,7 @@ rule wfmash:
     params:
         hg_ani_diff = get_hg_filter_ani,
         block_length = lambda wildcards: int(wildcards.segment_length) * 3,
-        mapping = lambda wildcards, input: f'-i {input.mapping}' if wildcards.mode == 'alignment' else ''
+        mapping = lambda wildcards, input: f'-i {input.mapping}' if wildcards.mode == 'alignment' else '--approx-map'
     threads: lambda wildcards: 12 if wildcards.mode == 'mapping' else 16
     resources:
         mem_mb_per_cpu = 5000,
@@ -79,7 +79,6 @@ wfmash \
 {input.fasta[0]} \
 --skip-self \
 --lower-triangular \
---approx-map \
 > {output.paf}
         '''
 
@@ -100,18 +99,18 @@ rule split_approx_mappings_in_chunks:
         rng = np.random.default_rng()
         weights = np.ones(shape=config.get('wfmash_chunks',1))
 
-        fds = [open(fname, 'w') for name in output['paf']]
+        fds = [open(fname, 'w') for fname in output['paf']]
 
         def calculate_p(weights):
             p = 1-weights/weights.sum()
             return p/p.sum()
 
         indexes = None
-        with open(input['mapping']) as fin:
+        with open(input['mapping'][0]) as fin:
             for rank, line in enumerate(fin):
-                if rank % batch_size == 0:
-                    indexes = rng.choice(config.get('wfmash_chunks',1),batch_size,p=calculate_p(weights))
-                idx = indexes[rank % batch_size]
+                if rank % params.batch_size == 0:
+                    indexes = rng.choice(config.get('wfmash_chunks',1),params.batch_size,p=calculate_p(weights))
+                idx = indexes[rank % params.batch_size]
                 fds[idx].write(line)
 
                 _, _, query_start, query_end, _, _, _, target_start, target_end, _, _, _, estimated_identity = line.strip().split('\t')[:13]
@@ -146,7 +145,7 @@ rule seqwish:
     shell:
         '''
 seqwish \
--s {input.fasta} \
+-s {input.fasta[0]} \
 -p {input.alignment} \
 -k {wildcards.k} \
 -f 0 \
