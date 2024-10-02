@@ -16,7 +16,6 @@ wildcard_constraints:
     mode = r'mapping|alignment',
     chunk = r'\.\d+|'
 
-# add -P params
 rule wfmash_index:
     input:
         fasta = multiext('test.fa.gz','','.fai','.gzi')
@@ -30,18 +29,19 @@ rule wfmash_index:
         runtime = '1h'
     shell:
         '''
-        wfmash \
-          -s {wildcards.segment_length} \
-          -l {params.block_length} \
-          -c 30000 \
-          -p {wildcards.p} \
-          -n 1 \
-          -k 19 \
-          -t {threads} \
-          --tmp-base $TMPDIR \
-          --mm-index {output.index} \
-          {input.fasta[0]} \
-          --create-index-only
+wfmash \
+-s {wildcards.segment_length} \
+-l {params.block_length} \
+-c 30000 \
+-P inf \
+-p {wildcards.p} \
+-n 1 \
+-k 19 \
+-t {threads} \
+--tmp-base $TMPDIR \
+--mm-index {output.index} \
+{input.fasta[0]} \
+--create-index-only
         '''
 
 rule wfmash:
@@ -50,7 +50,7 @@ rule wfmash:
         index = rules.wfmash_index.output['index'],
         mapping = lambda wildcards: 'pggb/p{p}_s{segment_length}/mapping{chunk}.paf' if wildcards.mode == 'alignment' else []
     output:
-        paf = 'pggb/p{p}_s{segment_length}/{mode}{chunk,(\.\d+|)}.paf'
+        paf = 'pggb/p{p}_s{segment_length}/{mode}{chunk}.paf'
     params:
         hg_ani_diff = get_hg_filter_ani,
         block_length = lambda wildcards: int(wildcards.segment_length) * 3,
@@ -61,33 +61,36 @@ rule wfmash:
         runtime = '4h'
     shell:
         '''
-        wfmash \
-          -s {wildcards.segment_length} \
-          -l {params.block_length} \
-          -c 30000 \
-          -p {wildcards.p} \
-          -n 1 \
-          -k 19 \
-          -H 0.001 \
-          -Y "#" \
-          -t {threads} \
-          --hg-filter-ani-diff {params.hg_ani_diff} \
-          --mm-index {input.index} \
-          --tmp-base $TMPDIR \
-          {params.mapping} \
-          {input.fasta[0]} \
-          --skip-self \
-          --lower-triangular \
-          --approx-map \
-          > {output.paf}
-         '''
+wfmash \
+-s {wildcards.segment_length} \
+-l {params.block_length} \
+-c 30000 \
+-P inf \
+-p {wildcards.p} \
+-n 1 \
+-k 19 \
+-H 0.001 \
+--hg-filter-ani-diff {params.hg_ani_diff} \
+-Y "#" \
+-t {threads} \
+--tmp-base $TMPDIR \
+--mm-index {input.index} \
+{params.mapping} \
+{input.fasta[0]} \
+--skip-self \
+--lower-triangular \
+--approx-map \
+> {output.paf}
+        '''
 
-#based off https://github.com/waveygang/wfmash/blob/main/scripts/split_approx_mappings_in_chunks.py
+#weighted random round robin style reimplementation of https://github.com/waveygang/wfmash/blob/main/scripts/split_approx_mappings_in_chunks.py
 rule split_approx_mappings_in_chunks:
     input:
         mapping = expand(rules.wfmash.output['paf'],mode='mapping',chunk='',allow_missing=True)
     output:
         paf = expand('pggb/p{p}_s{segment_length}/mapping.{chunk}.paf',chunk=range(config.get('wfmash_chunks',1)),allow_missing=True)
+    params:
+        batch_size = 1000 #re-weight the random choices every N mappings
     threads: 1
     resources:
         mem_mb_per_cpu = 1000,
@@ -95,11 +98,9 @@ rule split_approx_mappings_in_chunks:
     run:
         import numpy as np
         rng = np.random.default_rng()
-        weights = np.ones(shape=num_chunks)
+        weights = np.ones(shape=config.get('wfmash_chunks',1))
 
-        fds = []
-        for fname in output['paf']:
-            fds.append(open(fname, 'w'))
+        fds = [open(fname, 'w') for name in output['paf']]
 
         def calculate_p(weights):
             p = 1-weights/weights.sum()
@@ -108,19 +109,15 @@ rule split_approx_mappings_in_chunks:
         indexes = None
         with open(input['mapping']) as fin:
             for rank, line in enumerate(fin):
-
                 if rank % batch_size == 0:
-                    indexes = rng.choice(num_chunks,batch_size,p=calculate_p(weights))
-
-                fds[indexes[rank % batch_size]].write(line)
+                    indexes = rng.choice(config.get('wfmash_chunks',1),batch_size,p=calculate_p(weights))
+                idx = indexes[rank % batch_size]
+                fds[idx].write(line)
 
                 _, _, query_start, query_end, _, _, _, target_start, target_end, _, _, _, estimated_identity = line.strip().split('\t')[:13]
 
-                num_mapped_bases = max(int(query_end) - int(query_start), int(target_end) - int(target_start))
-                estimated_identity = float(estimated_identity.split('id:f:')[1]) / 100.0
-
-                # High divergence makes alignment more difficult
-                weights[indexes[rank % batch_size]] += num_mapped_bases * (1 - estimated_identity)
+                # increase weights by length * divergence
+                weights[idx] += max(int(query_end) - int(query_start), int(target_end) - int(target_start)) * ( 100 - float(estimated_identity.split('id:f:')[1]))
 
         for f in fds:
             f.close()
@@ -133,7 +130,7 @@ rule wfmash_concat:
     localrule: True
     shell:
         '''
-        cat {input} > {output}
+cat {input} > {output}
         '''
 
 rule seqwish:
@@ -148,16 +145,15 @@ rule seqwish:
         runtime = '4h'
     shell:
         '''
-            seqwish \
-                -s {input.fasta} \
-                -p {input.alignment} \
-                -k {wildcards.k} \
-                -f 0 \
-                -g {output.gfa} \
-                -B 10000000 \
-                -t {threads} \
-                --temp-dir $TMPDIR \
-                -P
+seqwish \
+-s {input.fasta} \
+-p {input.alignment} \
+-k {wildcards.k} \
+-f 0 \
+-g {output.gfa} \
+-B 10000000 \
+-t {threads} \
+--temp-dir $TMPDIR
         '''
 
 def POA_params(wildcards):
@@ -189,23 +185,23 @@ rule smoothxg:
         runtime = '24h'
     shell:
         '''
-            smoothxg \
-             -t {threads} \
-             -T {threads} \
-             -g {input.gfa} \
-             -r {params.n_haps} \
-             --base $TMPDIR \
-             --chop-to 100 \
-             -I {params.block_id_min} \
-             -R 0 \
-             -j 0 \
-             -e 0 \
-             -l {params.POA_lengths} \
-             -P {params.POA_params} \
-             -O 0.001 \
-             -Y {params.POA_pad_depth} \
-             -d 0 -D 0 \
-             -o {output.gfa}
+smoothxg \
+-t {threads} \
+-T {threads} \
+-g {input.gfa} \
+-r {params.n_haps} \
+--base $TMPDIR \
+--chop-to 100 \
+-I {params.block_id_min} \
+-R 0 \
+-j 0 \
+-e 0 \
+-l {params.POA_lengths} \
+-P {params.POA_params} \
+-O 0.001 \
+-Y {params.POA_pad_depth} \
+-d 0 -D 0 \
+-o {output.gfa}
         '''
 
 rule gffafix:
@@ -239,9 +235,8 @@ rule vg_path_normalise:
         runtime = '4h'
     shell:
         '''
-        vg convert -g {input.gfa} -t {threads} -x |\
-        #vg mod -X 1024 {input.gfa} |\ #unneeded if already unchopped
-        vg paths -x - -n -Q {params.reference} -t {threads}
+vg convert -g {input.gfa} -t {threads} -x |\
+vg paths -x - -n -Q {params.reference} -t {threads}
         '''
 
 rule odgi_unchop:
@@ -256,9 +251,50 @@ rule odgi_unchop:
         runtime = '4h'
     shell:
         '''
-        odgi build -t {threads} -P -g {input.gfa} -o - -O |\
-        odgi unchop -P -t {threads} -i - -o - |\
-        odgi sort -P -p Ygs --temp-dir $TMPDIR -t {threads} -i - -o - |\
-        tee {output.og} |\
-        odgi view -i - -g > {output.gfa}
+odgi build -t {threads} -P -g {input.gfa} -o - -O |\
+odgi unchop -P -t {threads} -i - -o - |\
+odgi sort -P -p Ygs --temp-dir $TMPDIR -t {threads} -i - -o - |\
+tee {output.og} |\
+odgi view -i - -g > {output.gfa}
+        '''
+
+rule odgi_layout:
+    input:
+        og = rules.odgi_unchop.output['og']
+    output:
+        layout = multiext('pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.lay','','.tsv')
+    threads: 6
+    resources:
+        mem_mb_per_cpu = 8000,
+        runtime = '4h'
+    shell:
+        '''
+odgi layout \
+-i {input.og} \
+ -o {output.layout[0]} \
+ -T {output.layout[1]} \
+ -t {threads} --temp-dir $TMPDIR -P
+        '''
+
+rule odgi_draw:
+    input:
+        og = rules.odgi_unchop.output['og'],
+        layout = rules.odgi_layout.output['layout'][0]
+    output:
+        image = multiext('pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.{draw}','.png','.svg')
+    params:
+        draw_paths = lambda wildcards: '-C -w 20' if wildcards.draw == 'path' else ''
+    threads: 2
+    resources:
+        mem_mb_per_cpu = 5000,
+        runtime = '4h'
+    shell:
+        '''
+odgi draw -i {input.og} \
+-t {threads} \
+--coords-in {input.layout} \
+--png {output.image[0]} \
+--svg {output.image[1]} \
+{params.draw_paths} \
+-H 1000
         '''
