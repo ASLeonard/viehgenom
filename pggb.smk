@@ -200,6 +200,7 @@ smoothxg \
 -O 0.001 \
 -Y {params.POA_pad_depth} \
 -d 0 -D 0 \
+-V \
 -o {output.gfa}
         '''
 
@@ -227,15 +228,16 @@ rule vg_path_normalise:
     output:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.vg.gfa'
     params:
-        reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip().split('\\t')[0]
+        reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip().split('\t')[0]
     threads: 4
     resources:
         mem_mb_per_cpu = 10000,
         runtime = '4h'
     shell:
         '''
-vg convert -g {input.gfa} -t {threads} -x |\
-vg paths -x - -n -Q {params.reference} -t {threads}
+vg convert -g {input.gfa} -t {threads} -p |\
+vg paths -x - -n -Q {params.reference} -t {threads} |\
+vg convert -f - > {output.gfa}
         '''
 
 rule odgi_unchop:
