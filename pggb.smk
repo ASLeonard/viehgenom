@@ -229,15 +229,17 @@ rule vg_path_normalise:
         gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.vg.gfa'
     params:
         reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip().split('\t')[0]
-    threads: 4
+    threads: 1
     resources:
-        mem_mb_per_cpu = 10000,
-        runtime = '4h'
+        mem_mb_per_cpu = 2500,
+        runtime = '24h'
     shell:
         '''
-vg convert -g {input.gfa} -t {threads} -p |\
-vg paths -x - -n -Q {params.reference} -t {threads} |\
-vg convert -f - > {output.gfa}
+vg convert -t {threads} --packed-out --gfa-in {input.gfa} |\
+vg mod -t {threads} --chop 1024 - |\
+vg paths -t {threads} -n -Q {params.reference} --xg - |\
+vg mod -t {threads} --unchop - |\
+vg convert -t {threads} --gfa-out --no-wline - > {output.gfa}
         '''
 
 rule odgi_unchop:
