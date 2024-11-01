@@ -32,8 +32,8 @@ rule wfmash_index:
 wfmash \
 -s {wildcards.segment_length} \
 -l {params.block_length} \
--c 30000 \
--P inf \
+-c 2000 \
+-P 50k \
 -p {wildcards.p} \
 -n 1 \
 -k 19 \
@@ -64,13 +64,11 @@ rule wfmash:
 wfmash \
 -s {wildcards.segment_length} \
 -l {params.block_length} \
--c 30000 \
--P inf \
+-c 2000 \
+-P 50k \
 -p {wildcards.p} \
 -n 1 \
--k 19 \
--H 0.001 \
---hg-filter-ani-diff {params.hg_ani_diff} \
+-k 15 \
 -Y "#" \
 -t {threads} \
 --tmp-base $TMPDIR \
