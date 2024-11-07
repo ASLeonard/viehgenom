@@ -2,13 +2,6 @@ rule all:
     input:
         'pggb/p90_s15000/mapping.paf'
 
-def get_hg_filter_ani(wildcards):
-    if float(wildcards.p) >= 90:
-        return 30
-    elif float(wildcards.p) >= 80:
-        return 10
-    else:
-        return 0
 
 ruleorder: split_approx_mappings_in_chunks > wfmash
 
@@ -52,7 +45,6 @@ rule wfmash:
     output:
         paf = 'pggb/p{p}_s{segment_length}/{mode}{chunk}.paf'
     params:
-        hg_ani_diff = get_hg_filter_ani,
         block_length = lambda wildcards: int(wildcards.segment_length) * 3,
         mapping = lambda wildcards, input: f'-i {input.mapping}' if wildcards.mode == 'alignment' else '--approx-map'
     threads: lambda wildcards: 12 if wildcards.mode == 'mapping' else 16
