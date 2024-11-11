@@ -1,0 +1,10 @@
+references:
+  ARS_UCD2.0: 'GCA_002263795.4_ARS-UCD2.0_genomic.fa'
+
+
+metadata: 'metadata.csv'
+
+peptides:
+  ARS_UCD1.3: 'https://ftp.ensembl.org/pub/release-112/fasta/bos_taurus/pep/Bos_taurus.ARS-UCD1.3.pep.all.fa.gz'
+  Tuli: 'https://ftp.ebi.ac.uk/pub/databases/ensembl/ereboperezsilva/bos_taurus_tuli/pep/Bos_taurus_gca040285425v1.ASM4028542v1.pep.all.fa.gz'
+  Wagyu: 'https://ftp.ebi.ac.uk/pub/databases/ensembl/ereboperezsilva/bos_taurus_wagyu/pep/Bos_taurus_wagyu.ASM4028618v1.pep.all.fa.gz'

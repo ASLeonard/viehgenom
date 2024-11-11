@@ -1,0 +1,4 @@
+ID,Filename,Species,Subspecies,Breed,Paired haplotype,Animal ID,Special interest,Region,Species representative,Subspecies representative,Breed representative,Public download,Responsible contact
+HERE_1_XXXXXX,Hereford_1,Bos taurus,Taurine,Hereford,HERE_2_XXXXXX,,,,,,Y,,test@aol.com
+HERE_2_XXXXXX,Hereford_2,Bos taurus,Taurine,Hereford,HERE_1_XXXXXX,,,,Y,,,,test@aol.com
+ZEBU_1_XXXXXX,Zebu,Bos taurus,Indicine,Zebu,,,,,,Y,Y,,test@aol.com
