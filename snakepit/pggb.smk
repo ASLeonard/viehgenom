@@ -1,6 +1,3 @@
-rule all:
-    input:
-        'pggb/p90_s15000/mapping.paf'
 
 
 ruleorder: split_approx_mappings_in_chunks > wfmash
@@ -11,9 +8,9 @@ wildcard_constraints:
 
 rule wfmash_index:
     input:
-        fasta = multiext('test.fa.gz','','.fai','.gzi')
+        fasta = multiext('data/freeze_1/{graph}/{chromosome}.fa.gz','','.fai','.gzi')
     output:
-        index = 'pggb/p{p}_s{segment_length}/index.mm3'
+        index = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.index.mm3'
     params:
         block_length = lambda wildcards: int(wildcards.segment_length) * 3
     threads: 4
@@ -39,11 +36,11 @@ wfmash \
 
 rule wfmash:
     input:
-        fasta = multiext('test.fa.gz','','.fai','.gzi'),
+        fasta = multiext('data/freeze_1/{graph}/{chromosome}.fa.gz','','.fai','.gzi'),
         index = rules.wfmash_index.output['index'],
-        mapping = lambda wildcards: 'pggb/p{p}_s{segment_length}/mapping{chunk}.paf' if wildcards.mode == 'alignment' else []
+        mapping = lambda wildcards: 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.mapping{chunk}.paf' if wildcards.mode == 'alignment' else []
     output:
-        paf = 'pggb/p{p}_s{segment_length}/{mode}{chunk}.paf'
+        paf = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.{mode}{chunk}.paf'
     params:
         block_length = lambda wildcards: int(wildcards.segment_length) * 3,
         mapping = lambda wildcards, input: f'-i {input.mapping}' if wildcards.mode == 'alignment' else '--approx-map'
@@ -77,7 +74,7 @@ rule split_approx_mappings_in_chunks:
     input:
         mapping = expand(rules.wfmash.output['paf'],mode='mapping',chunk='',allow_missing=True)
     output:
-        paf = expand('pggb/p{p}_s{segment_length}/mapping.{chunk}.paf',chunk=range(config.get('wfmash_chunks',1)),allow_missing=True)
+        paf = expand('analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.mapping.{chunk}.paf',chunk=range(config.get('wfmash_chunks',1)),allow_missing=True)
     params:
         batch_size = 1000 #re-weight the random choices every N mappings
     threads: 1
@@ -115,7 +112,7 @@ rule wfmash_concat:
     input:
         expand(rules.wfmash.output['paf'],mode='alignment.',chunk=range(config.get('wfmash_chunks',1)),allow_missing=True)
     output:
-        paf = 'pggb/p{p}_s{segment_length}/alignment.concat.paf'
+        paf = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.alignment.concat.paf'
     localrule: True
     shell:
         '''
@@ -124,10 +121,10 @@ cat {input} > {output}
 
 rule seqwish:
     input:
-        fasta = multiext('test.fa.gz','','.fai','.gzi'),
+        fasta = multiext('data/freeze_1/{graph}/{chromosome}.fa.gz','','.fai','.gzi'),
         alignment = expand(rules.wfmash_concat.output['paf'],allow_missing=True) if config.get('wfmash_chunks',1) > 1 else expand(rules.wfmash.output['paf'],mode='alignment',chunk='',allow_missing=True)
     output:
-        gfa = 'pggb/p{p}_s{segment_length}/k{k}.seqwish.gfa'
+        gfa = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.seqwish.gfa'
     threads: 12
     resources:
         mem_mb_per_cpu = 5000,
@@ -158,10 +155,10 @@ def POA_params(wildcards):
 
 rule smoothxg:
     input:
-        fasta = multiext('test.fa.gz','','.fai','.gzi'),
+        fasta = multiext('data/freeze_1/{graph}/{chromosome}.fa.gz','','.fai','.gzi'),
         gfa = rules.seqwish.output['gfa']
     output:
-        gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.smoothxg.gfa'
+        gfa = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.smoothxg.gfa'
     params:
         block_id_min = lambda wildcards: round(float(wildcards.p) / 4,4),
         n_haps = lambda wildcards, input: sum(1 for _ in open(input.fasta[1])),
@@ -198,8 +195,8 @@ rule gffafix:
     input:
         gfa = rules.smoothxg.output['gfa']
     output:
-        gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.gffafix.gfa',
-        affixes = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.gffafix.affixes.tsv.gz'
+        gfa = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.gffafix.gfa',
+        affixes = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.gffafix.affixes.tsv.gz'
     threads: 1
     resources:
         mem_mb_per_cpu = 15000,
@@ -212,10 +209,10 @@ rule gffafix:
 
 rule vg_path_normalise:
     input:
-        fasta = multiext('test.fa.gz','','.fai','.gzi'),
+        fasta = multiext('data/freeze_1/{graph}/{chromosome}.fa.gz','','.fai','.gzi'),
         gfa = rules.gffafix.output['gfa']
     output:
-        gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.vg.gfa'
+        gfa = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.vg.gfa'
     params:
         reference = lambda wildcards, input: open(input.fasta[1]).readline().rstrip().split('\t')[0]
     threads: 1
@@ -235,8 +232,8 @@ rule odgi_unchop:
     input:
         gfa = rules.vg_path_normalise.output['gfa'] if config.get('Normalise_path',False) else rules.gffafix.output['gfa']
     output:
-        og = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.og',
-        gfa = 'pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.gfa'
+        og = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.unchop.og',
+        gfa = 'analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.unchop.gfa'
     threads: 6
     resources:
         mem_mb_per_cpu = 8000,
@@ -254,7 +251,7 @@ rule odgi_layout:
     input:
         og = rules.odgi_unchop.output['og']
     output:
-        layout = multiext('pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.lay','','.tsv')
+        layout = multiext('analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.unchop.lay','','.tsv')
     threads: 6
     resources:
         mem_mb_per_cpu = 8000,
@@ -273,7 +270,7 @@ rule odgi_draw:
         og = rules.odgi_unchop.output['og'],
         layout = rules.odgi_layout.output['layout'][0]
     output:
-        image = multiext('pggb/p{p}_s{segment_length}/k{k}.POA{POA}.unchop.{draw}','.png','.svg')
+        image = multiext('analyses/pggb/{graph}/p{p}_s{segment_length}/{chromosome}.k{k}.POA{POA}.unchop.{draw}','.png','.svg')
     params:
         draw_paths = lambda wildcards: '-C -w 20' if wildcards.draw == 'path' else ''
     threads: 2
